@@ -1,3 +1,4 @@
+import asyncio
 import io
 import logging
 import re
@@ -65,7 +66,8 @@ class AudioGenerator:
                     )
 
                     s3_key = f"audio/{company_id}/{script_id}/{node_key}_{lang}.wav"
-                    self.s3.upload_fileobj(
+                    await asyncio.to_thread(
+                        self.s3.upload_fileobj,
                         io.BytesIO(audio_bytes),
                         self.bucket,
                         s3_key,
@@ -174,7 +176,8 @@ class AudioGenerator:
 
         company_id = str(script.company_id)
         s3_key = f"audio/{company_id}/{script_id}/{node_key}_{language_code}.wav"
-        self.s3.upload_fileobj(
+        await asyncio.to_thread(
+            self.s3.upload_fileobj,
             io.BytesIO(audio_bytes),
             self.bucket,
             s3_key,

@@ -1,3 +1,4 @@
+import asyncio
 import io
 import logging
 import uuid
@@ -114,7 +115,8 @@ class CampaignManager:
         campaign.total_numbers = len(existing_numbers)
 
         s3_key = f"csv/{company_id}/{campaign_id}/phone_list.csv"
-        self.s3.upload_fileobj(
+        await asyncio.to_thread(
+            self.s3.upload_fileobj,
             io.BytesIO(file_content),
             self.bucket,
             s3_key,
@@ -212,8 +214,8 @@ class CampaignManager:
         logger.info(f"Campaign stopped: {campaign.name}")
         return campaign
 
-    async def get_progress(self, db: AsyncSession, campaign_id: uuid.UUID) -> CampaignProgress:
-        result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
+    async def get_progress(self, db: AsyncSession, campaign_id: uuid.UUID, company_id: uuid.UUID) -> CampaignProgress:
+        result = await db.execute(select(Campaign).where(Campaign.id == campaign_id, Campaign.company_id == company_id))
         campaign = result.scalar_one_or_none()
         if not campaign:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")

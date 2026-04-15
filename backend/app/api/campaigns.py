@@ -196,7 +196,7 @@ async def get_progress(
     db: AsyncSession = Depends(get_db),
 ):
     manager = CampaignManager()
-    return await manager.get_progress(db, campaign_id)
+    return await manager.get_progress(db, campaign_id, user.company_id)
 
 
 @router.get("/{campaign_id}/phone-numbers")

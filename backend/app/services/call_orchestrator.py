@@ -42,6 +42,7 @@ class CallOrchestrator:
         script_content: dict,
         customer_data: dict,
         db: AsyncSession,
+        script_id: str | uuid.UUID | None = None,
         sarvam: SarvamClient | None = None,
         gemini: GeminiIntentClassifier | None = None,
         audio_generator: AudioGenerator | None = None,
@@ -53,6 +54,7 @@ class CallOrchestrator:
         self.script_content = script_content
         self.customer_data = customer_data
         self.db = db
+        self.script_id: uuid.UUID | None = uuid.UUID(str(script_id)) if script_id else None
 
         self.detected_language = script_content.get("default_language", "hi")
         self.current_node = "greeting"
@@ -392,7 +394,9 @@ class CallOrchestrator:
             logger.error(f"Failed to save call log: {e}")
 
     def _get_script_id(self) -> uuid.UUID:
-        return uuid.uuid4()
+        if self.script_id is None:
+            raise ValueError("script_id was not provided to CallOrchestrator")
+        return self.script_id
 
     @staticmethod
     def _is_valid_uuid(val: str) -> bool:

@@ -15,6 +15,7 @@ class CallLog(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     campaign_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("campaigns.id"), nullable=True)
     company_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
+    exotel_call_sid: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     phone_number: Mapped[str] = mapped_column(String(20), nullable=False)
     direction: Mapped[str] = mapped_column(String(20), default="outbound")
     status: Mapped[str] = mapped_column(String(50), default="queued")
