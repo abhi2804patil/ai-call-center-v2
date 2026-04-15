@@ -50,7 +50,8 @@ async def _process_campaign(campaign_id_str: str):
                 return
 
             telephony = TelephonyClient()
-            callback_url = f"http://backend:8000/api/v1/webhooks/exotel/status"
+            base_url = settings.SERVER_BASE_URL or "http://backend:8000"
+            callback_url = f"{base_url}/api/v1/webhooks/exotel/status"
             from_number = campaign.settings.get("caller_number") or settings.EXOTEL_CALLER_NUMBER
             if not from_number:
                 logger.error(f"No caller number configured for campaign {campaign_id_str}")
@@ -134,7 +135,8 @@ async def _initiate_single(campaign_id_str: str, phone_number_id_str: str):
                 return
 
             telephony = TelephonyClient()
-            callback_url = f"http://backend:8000/api/v1/webhooks/exotel/status"
+            base_url = settings.SERVER_BASE_URL or "http://backend:8000"
+            callback_url = f"{base_url}/api/v1/webhooks/exotel/status"
             from_number = settings.EXOTEL_CALLER_NUMBER
             if not from_number:
                 logger.error("No caller number configured (EXOTEL_CALLER_NUMBER)")

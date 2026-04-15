@@ -41,6 +41,20 @@ SARVAM_LANGUAGES = {
     "en": "English",
 }
 
+# Sarvam API requires full locale codes (e.g. "hi-IN" not "hi")
+_LANG_TO_LOCALE = {
+    "hi": "hi-IN", "bn": "bn-IN", "gu": "gu-IN", "kn": "kn-IN",
+    "ml": "ml-IN", "mr": "mr-IN", "od": "od-IN", "pa": "pa-IN",
+    "ta": "ta-IN", "te": "te-IN", "en": "en-IN",
+}
+
+
+def _normalize_lang(code: str) -> str:
+    """Convert short language codes to full Sarvam locale codes."""
+    if "-" in code:
+        return code  # Already a locale like "hi-IN"
+    return _LANG_TO_LOCALE.get(code, f"{code}-IN")
+
 
 class SarvamClient:
     BASE_URL = "https://api.sarvam.ai"
@@ -59,11 +73,12 @@ class SarvamClient:
         self,
         text: str,
         language_code: str,
-        voice: str = "meera",
-        model: str = "bulbul:v2",
+        voice: str = "priya",
+        model: str = "bulbul:v3-beta",
         sample_rate: int = 8000,
     ) -> tuple[bytes, int]:
         start_time = time.time()
+        language_code = _normalize_lang(language_code)
         url = f"{self.BASE_URL}/text-to-speech"
         payload = {
             "inputs": [text],
@@ -71,7 +86,7 @@ class SarvamClient:
             "speaker": voice,
             "model": model,
             "speech_sample_rate": sample_rate,
-            "enable_preprocessing": True,
+            "enable_preprocessing": False,
         }
 
         response = await self._request_with_retry("POST", url, json=payload)
@@ -94,12 +109,14 @@ class SarvamClient:
         language_code: str = "auto",
     ) -> dict:
         start_time = time.time()
+        if language_code != "auto":
+            language_code = _normalize_lang(language_code)
         url = f"{self.BASE_URL}/speech-to-text"
 
         files = {"file": ("audio.wav", io.BytesIO(audio_data), "audio/wav")}
         data = {
             "language_code": language_code,
-            "model": "saarika:v2",
+            "model": "saarika:v2.5",
         }
 
         response = await self._request_with_retry("POST", url, data=data, files=files)
@@ -126,7 +143,7 @@ class SarvamClient:
         files = {"file": ("audio.wav", io.BytesIO(audio_data), "audio/wav")}
         data = {
             "language_code": language_code,
-            "model": "saarika:v2",
+            "model": "saarika:v2.5",
         }
 
         response = await self._request_with_retry("POST", url, data=data, files=files)

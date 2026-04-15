@@ -37,10 +37,14 @@ class TelephonyClient:
         callback_url: str,
     ) -> dict:
         url = f"{self.base_url}/Calls/connect.json"
+        settings = get_settings()
+        # Use Exotel App Bazar flow URL — the app contains the Voicebot applet
+        # which connects directly to our WebSocket for bidirectional audio
+        app_url = f"http://my.exotel.com/{self.sid}/exoml/start_voice/{settings.EXOTEL_APP_ID}"
         data = {
             "From": to_number,
             "CallerId": from_number,
-            "Url": callback_url,
+            "Url": app_url,
             "StatusCallback": callback_url,
         }
 

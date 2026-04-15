@@ -20,8 +20,8 @@ class Settings(BaseSettings):
 
     # Sarvam AI
     SARVAM_API_KEY: str = ""
-    DEFAULT_SARVAM_VOICE: str = "meera"
-    DEFAULT_SARVAM_TTS_MODEL: str = "bulbul:v2"
+    DEFAULT_SARVAM_VOICE: str = "priya"
+    DEFAULT_SARVAM_TTS_MODEL: str = "bulbul:v3-beta"
 
     # Google Gemini
     GEMINI_API_KEY: str = ""
@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     EXOTEL_API_TOKEN: str = ""
     EXOTEL_SUBDOMAIN: str = ""
     EXOTEL_CALLER_NUMBER: str = ""
+    EXOTEL_VIRTUAL_NUMBER: str = ""
+    EXOTEL_APP_ID: str = ""
 
     # AWS S3
     AWS_ACCESS_KEY_ID: str = ""
@@ -43,6 +45,7 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     APP_DEBUG: bool = True
     CORS_ORIGINS: str = "http://localhost:3000"
+    SERVER_BASE_URL: str = ""
 
     @model_validator(mode="after")
     def validate_production_secrets(self):

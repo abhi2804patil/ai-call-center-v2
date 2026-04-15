@@ -27,7 +27,8 @@ class GeminiIntentClassifier:
             "gemini-2.5-flash",
             generation_config=genai.GenerationConfig(
                 temperature=0.1,
-                max_output_tokens=100,
+                max_output_tokens=256,
+                response_mime_type="application/json",
             ),
         )
         self.summary_model = genai.GenerativeModel(
@@ -50,15 +51,16 @@ class GeminiIntentClassifier:
         for intent, keywords in possible_intents.items():
             intent_lines += f'- "{intent}": similar to [{", ".join(keywords)}]\n'
 
-        prompt = f"""You are an intent classifier for a phone call. The customer said: "{customer_text}"
+        prompt = f"""You are an intent classifier for an Indian language phone call. The customer said: "{customer_text}"
 The customer is likely speaking in {language_hint}.
 
-Classify this into ONE of these intents based on the keywords and meaning:
-{intent_lines}- "fallback": if none of the above match
+Classify this into ONE of these intents based on semantic meaning (not just exact keyword match):
+{intent_lines}- "fallback": ONLY if the text is truly unintelligible or completely unrelated
 - "transfer": if customer asks for human agent, manager, or wants to complain
 
-Respond with ONLY a JSON object: {{"intent": "intent_name", "confidence": 0.0-1.0}}
-No other text."""
+IMPORTANT: Any affirmative response like "haan", "ha", "ji", "yes", "ok", "theek hai", "batao", "jaanna hai" should be classified as "interested" with high confidence. Be generous with matching — this is a phone call with informal speech.
+
+Respond with ONLY a JSON object: {{"intent": "intent_name", "confidence": 0.0-1.0}}"""
 
         try:
             response = await asyncio.to_thread(self.model.generate_content, prompt)
@@ -70,7 +72,7 @@ No other text."""
 
             result = json.loads(response_text)
 
-            if result.get("confidence", 0) < 0.4:
+            if result.get("confidence", 0) < 0.2:
                 result["intent"] = "fallback"
 
             logger.info(

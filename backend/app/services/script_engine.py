@@ -2,7 +2,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-VALID_VOICES = {"meera", "arvind"}
+VALID_VOICES = {"anushka", "abhilash", "manisha", "vidya", "arya", "karun", "hitesh"}
 VALID_NEXT_ACTIONS = {"listen", "end", "transfer"}
 REQUIRED_NODES = {"greeting", "closing", "fallback"}
 
@@ -78,6 +78,16 @@ class ScriptEngine:
     @staticmethod
     def get_next_node_for_intent(content: dict, current_node: str, intent: str) -> str:
         nodes = content.get("nodes", {})
+        current_config = nodes.get(current_node, {})
+
+        # Check node-level transitions first (e.g. greeting->interested->closing)
+        transitions = current_config.get("transitions", {})
+        if intent in transitions:
+            target = transitions[intent]
+            if target in nodes:
+                return target
+
+        # Fall back to global intent-to-node mapping
         if intent in nodes:
             return intent
         if intent == "transfer" and "transfer" in nodes:
