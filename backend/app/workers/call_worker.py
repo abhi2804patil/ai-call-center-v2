@@ -51,6 +51,10 @@ async def _process_campaign(campaign_id_str: str):
 
             telephony = TelephonyClient()
             callback_url = f"http://backend:8000/api/v1/webhooks/exotel/status"
+            from_number = campaign.settings.get("caller_number") or settings.EXOTEL_CALLER_NUMBER
+            if not from_number:
+                logger.error(f"No caller number configured for campaign {campaign_id_str}")
+                return
 
             for phone_record in pending_numbers:
                 refresh_result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
@@ -78,7 +82,7 @@ async def _process_campaign(campaign_id_str: str):
                     await db.flush()
 
                     call_result = await telephony.make_call(
-                        from_number="+911234567890",
+                        from_number=from_number,
                         to_number=phone_record.phone_number,
                         callback_url=callback_url,
                     )
@@ -131,9 +135,13 @@ async def _initiate_single(campaign_id_str: str, phone_number_id_str: str):
 
             telephony = TelephonyClient()
             callback_url = f"http://backend:8000/api/v1/webhooks/exotel/status"
+            from_number = settings.EXOTEL_CALLER_NUMBER
+            if not from_number:
+                logger.error("No caller number configured (EXOTEL_CALLER_NUMBER)")
+                return
 
             call_result = await telephony.make_call(
-                from_number="+911234567890",
+                from_number=from_number,
                 to_number=phone_record.phone_number,
                 callback_url=callback_url,
             )

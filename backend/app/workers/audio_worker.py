@@ -22,6 +22,7 @@ async def _generate_audio(script_id_str: str):
     session_factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
     redis_client = redis.Redis.from_url(settings.REDIS_URL)
 
+    sarvam = None
     async with session_factory() as db:
         try:
             sarvam = SarvamClient()
@@ -58,7 +59,8 @@ async def _generate_audio(script_id_str: str):
             raise
 
         finally:
-            await sarvam.close()
+            if sarvam:
+                await sarvam.close()
             await engine.dispose()
             redis_client.close()
 

@@ -22,9 +22,10 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
+cors_origins = ["http://localhost:3000"] if settings.APP_ENV == "development" else settings.CORS_ORIGINS.split(",") if hasattr(settings, "CORS_ORIGINS") and settings.CORS_ORIGINS else []
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -64,7 +65,7 @@ async def live_call_monitor(websocket: WebSocket, company_id: str):
         return
     try:
         payload = decode_token(token)
-        if payload.get("company_id") != company_id:
+        if payload.get("type") != "access" or payload.get("company_id") != company_id:
             await websocket.close(code=4003)
             return
     except Exception:

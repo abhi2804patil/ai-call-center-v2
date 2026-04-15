@@ -3,7 +3,7 @@ import logging
 import uuid
 from datetime import date, datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import Float, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import get_settings
@@ -22,7 +22,7 @@ async def _generate_summary(call_log_id: str):
 
     async with session_factory() as db:
         try:
-            result = await db.execute(select(CallLog).where(CallLog.id == call_log_id))
+            result = await db.execute(select(CallLog).where(CallLog.id == uuid.UUID(call_log_id)))
             call_log = result.scalar_one_or_none()
             if not call_log:
                 logger.warning(f"Call log not found: {call_log_id}")
@@ -73,7 +73,7 @@ async def _aggregate_analytics():
                     func.count(CallLog.id).filter(CallLog.status == "completed").label("successful_calls"),
                     func.count(CallLog.id).filter(CallLog.status == "failed").label("failed_calls"),
                     func.avg(CallLog.duration_seconds).label("avg_duration"),
-                    func.sum(func.cast(func.coalesce(CallLog.cost_breakdown["total"].as_float(), 0), None)).label("total_cost"),
+                    func.sum(func.cast(func.coalesce(CallLog.cost_breakdown["total"].as_float(), 0), Float)).label("total_cost"),
                 ).where(
                     func.date(CallLog.created_at) == today
                 ).group_by(

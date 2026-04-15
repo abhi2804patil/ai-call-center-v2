@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -30,6 +31,7 @@ class Settings(BaseSettings):
     EXOTEL_API_KEY: str = ""
     EXOTEL_API_TOKEN: str = ""
     EXOTEL_SUBDOMAIN: str = ""
+    EXOTEL_CALLER_NUMBER: str = ""
 
     # AWS S3
     AWS_ACCESS_KEY_ID: str = ""
@@ -40,6 +42,13 @@ class Settings(BaseSettings):
     # App
     APP_ENV: str = "development"
     APP_DEBUG: bool = True
+    CORS_ORIGINS: str = "http://localhost:3000"
+
+    @model_validator(mode="after")
+    def validate_production_secrets(self):
+        if self.APP_ENV != "development" and "change-this" in self.JWT_SECRET_KEY:
+            raise ValueError("JWT_SECRET_KEY must be changed from default in non-development environments")
+        return self
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
