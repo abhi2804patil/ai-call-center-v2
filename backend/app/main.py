@@ -59,10 +59,10 @@ async def health_check():
 
 @app.websocket("/ws/voicebot")
 async def voicebot_websocket(websocket: WebSocket):
-    """Exotel Voicebot WebSocket — real-time bidirectional audio streaming.
+    """Twilio Media Streams WebSocket — real-time bidirectional audio streaming.
 
-    The Voicebot applet in Exotel App Bazar connects directly to this
-    endpoint. Call metadata (call_sid) arrives via the Start event.
+    Twilio's <Connect><Stream> TwiML connects directly to this endpoint.
+    Call metadata (callSid) arrives via the Start event.
     """
     from app.database import AsyncSessionLocal
     from app.services.voicebot_handler import handle_voicebot_websocket

@@ -26,14 +26,10 @@ class Settings(BaseSettings):
     # Google Gemini
     GEMINI_API_KEY: str = ""
 
-    # Exotel
-    EXOTEL_SID: str = ""
-    EXOTEL_API_KEY: str = ""
-    EXOTEL_API_TOKEN: str = ""
-    EXOTEL_SUBDOMAIN: str = ""
-    EXOTEL_CALLER_NUMBER: str = ""
-    EXOTEL_VIRTUAL_NUMBER: str = ""
-    EXOTEL_APP_ID: str = ""
+    # Twilio
+    TWILIO_ACCOUNT_SID: str = ""
+    TWILIO_AUTH_TOKEN: str = ""
+    TWILIO_PHONE_NUMBER: str = ""
 
     # AWS S3
     AWS_ACCESS_KEY_ID: str = ""

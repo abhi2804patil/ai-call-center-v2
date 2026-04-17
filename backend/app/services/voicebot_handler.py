@@ -1,14 +1,15 @@
 """
-Real-time voicebot handler for Exotel WebSocket audio streaming.
+Real-time voicebot handler for Twilio Media Streams WebSocket audio streaming.
 
 Flow:
-  Exotel connects call → streams customer audio via WebSocket
-  → Buffer audio chunks → Sarvam STT
+  Twilio connects call → streams customer audio via WebSocket (mulaw 8kHz)
+  → Convert mulaw→PCM → Buffer audio chunks → Sarvam STT
   → Gemini intent classification → Script engine next node
-  → Sarvam TTS → stream audio back to customer via WebSocket
+  → Sarvam TTS → convert PCM→mulaw → stream audio back via WebSocket
 """
 
 import asyncio
+import audioop
 import base64
 import io
 import json
@@ -34,13 +35,15 @@ from app.services.script_engine import ScriptEngine
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Audio config: Exotel streams 8kHz 16-bit PCM (linear16)
+# Audio config: Twilio Media Streams use mulaw 8kHz mono
+# We convert to/from 16-bit linear PCM for processing
 SAMPLE_RATE = 8000
-BYTES_PER_SAMPLE = 2  # 16-bit
+BYTES_PER_SAMPLE = 2  # 16-bit PCM (after mulaw decode)
 CHANNELS = 1
-# Silence detection: 2 seconds of silence = end of utterance
+# Silence detection
 SILENCE_THRESHOLD = 500  # amplitude threshold for silence detection
-SILENCE_DURATION_MS = 1200  # ms of silence before processing
+SILENCE_DURATION_MS = 800  # ms of silence before processing (short utterances)
+SILENCE_DURATION_LONG_MS = 1200  # ms for longer utterances (>2s of speech)
 # Minimum audio to process (avoid processing noise/clicks)
 MIN_AUDIO_DURATION_MS = 500
 MAX_AUDIO_DURATION_MS = 30000
@@ -82,6 +85,16 @@ def _is_silence(pcm_chunk: bytes, threshold: int = SILENCE_THRESHOLD) -> bool:
     return rms < threshold
 
 
+def _mulaw_to_pcm(mulaw_data: bytes) -> bytes:
+    """Convert mulaw audio to 16-bit linear PCM."""
+    return audioop.ulaw2lin(mulaw_data, 2)
+
+
+def _pcm_to_mulaw(pcm_data: bytes) -> bytes:
+    """Convert 16-bit linear PCM to mulaw."""
+    return audioop.lin2ulaw(pcm_data, 2)
+
+
 class VoicebotSession:
     """Manages a single voicebot call session over WebSocket."""
 
@@ -113,7 +126,7 @@ class VoicebotSession:
         self.audio_gen = AudioGenerator(sarvam=self.sarvam)
         self.script_engine = ScriptEngine()
 
-        # Stream state
+        # Twilio stream state
         self.stream_sid = ""
         self._send_seq = 0
 
@@ -129,7 +142,7 @@ class VoicebotSession:
         self.is_playing = False
         self.is_active = True
 
-        # Audio buffer for customer speech
+        # Audio buffer for customer speech (stores linear PCM)
         self._audio_buffer = bytearray()
         self._silence_start: float | None = None
         self._speech_started = False
@@ -161,8 +174,7 @@ class VoicebotSession:
         try:
             logger.info(f"Voicebot session started: call_sid={self.call_sid}")
 
-            # Start reading from WebSocket in background — must keep
-            # draining incoming messages or Exotel will disconnect.
+            # Start reading from WebSocket in background
             self._reader_task = asyncio.create_task(self._read_loop())
 
             # Play greeting immediately from cache
@@ -207,44 +219,46 @@ class VoicebotSession:
             elif "bytes" in message:
                 if msg_count <= 5:
                     logger.info(f"Read loop msg #{msg_count}: binary {len(message['bytes'])}b")
-                await self._handle_audio_chunk(message["bytes"])
 
     async def _handle_control_message(self, text: str):
-        """Handle JSON control messages from Exotel stream.
+        """Handle JSON control messages from Twilio Media Streams.
 
-        Exotel uses lowercase event names: connected, start, media, stop, dtmf.
+        Twilio sends events: connected, start, media, stop, mark.
+        Audio payload is base64-encoded mulaw at 8kHz.
         """
         try:
             data = json.loads(text)
-            event = data.get("event", "").lower()
+            event = data.get("event", "")
 
             if event == "connected":
-                logger.info(f"Exotel stream connected")
+                logger.info(f"Twilio stream connected: protocol={data.get('protocol')}")
             elif event == "start":
                 start_data = data.get("start", {})
-                self.call_sid = start_data.get("call_sid", start_data.get("callSid", self.call_sid))
+                self.stream_sid = data.get("streamSid", "")
+                self.call_sid = start_data.get("callSid", self.call_sid)
                 logger.info(
-                    f"Exotel stream started: call_sid={self.call_sid}, "
-                    f"from={start_data.get('from')}, to={start_data.get('to')}"
+                    f"Twilio stream started: call_sid={self.call_sid}, "
+                    f"stream_sid={self.stream_sid}"
                 )
             elif event == "media":
                 payload = data.get("media", {}).get("payload", "")
                 if payload:
-                    audio_bytes = base64.b64decode(payload)
-                    await self._handle_audio_chunk(audio_bytes)
+                    mulaw_bytes = base64.b64decode(payload)
+                    # Convert mulaw to linear PCM for processing
+                    pcm_bytes = _mulaw_to_pcm(mulaw_bytes)
+                    await self._handle_audio_chunk(pcm_bytes)
             elif event == "stop":
-                logger.info(f"Exotel stream stopped: call_sid={self.call_sid}")
+                logger.info(f"Twilio stream stopped: call_sid={self.call_sid}")
                 self.is_active = False
-            elif event == "dtmf":
-                digit = data.get("dtmf", {}).get("digit", "")
-                logger.info(f"DTMF received: {digit}")
+            elif event == "mark":
+                logger.debug(f"Twilio mark event: {data.get('mark', {}).get('name')}")
             else:
-                logger.debug(f"Unknown control event: {event}")
+                logger.debug(f"Unknown Twilio event: {event}")
         except json.JSONDecodeError:
             logger.warning(f"Non-JSON text message received: {text[:100]}")
 
     async def _handle_audio_chunk(self, chunk: bytes):
-        """Buffer incoming audio and detect end-of-speech."""
+        """Buffer incoming PCM audio and detect end-of-speech."""
         if self.is_playing or not self.is_active:
             return
 
@@ -263,7 +277,12 @@ class VoicebotSession:
 
                 if self._silence_start is None:
                     self._silence_start = now
-                elif (now - self._silence_start) * 1000 >= SILENCE_DURATION_MS:
+                else:
+                    # Adaptive silence: short speech (< 2s) → 800ms, longer → 1200ms
+                    speech_ms = len(self._audio_buffer) / (SAMPLE_RATE * BYTES_PER_SAMPLE) * 1000
+                    threshold = SILENCE_DURATION_MS if speech_ms < 2000 else SILENCE_DURATION_LONG_MS
+                    if (now - self._silence_start) * 1000 < threshold:
+                        return
                     # End of utterance detected
                     await self._process_buffered_audio()
 
@@ -376,7 +395,7 @@ class VoicebotSession:
                 await self._play_node("fallback")
 
     async def _play_node(self, node_key: str):
-        """Generate TTS for a node and stream audio to Exotel."""
+        """Generate TTS for a node and stream audio to Twilio."""
         self.is_playing = True
         self.current_node = node_key
 
@@ -426,7 +445,7 @@ class VoicebotSession:
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
 
-            # Stream audio to Exotel via WebSocket
+            # Stream audio to Twilio via WebSocket
             await self._send_audio(audio_bytes)
 
         except Exception as e:
@@ -435,58 +454,60 @@ class VoicebotSession:
             self.is_playing = False
 
     async def _send_audio(self, audio_bytes: bytes):
-        """Send audio to Exotel over WebSocket.
+        """Send audio to Twilio over WebSocket.
 
-        Strips WAV header if present and sends raw PCM in chunks
-        as base64-encoded JSON media events with stream_sid and
-        sequence numbers matching Exotel's expected format.
+        Strips WAV header if present, converts linear PCM to mulaw,
+        and sends as base64-encoded media events matching Twilio's format.
         """
         try:
-            # Strip WAV header if present — Exotel expects raw PCM
+            # Strip WAV header if present
             pcm_data = audio_bytes
             if audio_bytes[:4] == b"RIFF" and len(audio_bytes) > 44:
                 pcm_data = audio_bytes[44:]
 
-            # Send in 20ms chunks (320 bytes) matching Exotel's own chunk size
-            CHUNK_SIZE = 320  # 20ms at 8kHz/16-bit/mono
+            # Convert linear PCM to mulaw for Twilio
+            mulaw_data = _pcm_to_mulaw(pcm_data)
+
+            # Send in 20ms chunks (160 bytes mulaw = 20ms at 8kHz)
+            CHUNK_SIZE = 160
             chunk_num = 0
-            for i in range(0, len(pcm_data), CHUNK_SIZE):
-                chunk = pcm_data[i : i + CHUNK_SIZE]
+            for i in range(0, len(mulaw_data), CHUNK_SIZE):
+                chunk = mulaw_data[i : i + CHUNK_SIZE]
                 self._send_seq += 1
                 chunk_num += 1
                 chunk_b64 = base64.b64encode(chunk).decode()
                 message = json.dumps({
                     "event": "media",
-                    "stream_sid": self.stream_sid,
-                    "sequence_number": str(self._send_seq),
+                    "streamSid": self.stream_sid,
                     "media": {
-                        "chunk": str(chunk_num),
-                        "timestamp": str(chunk_num * 20),
                         "payload": chunk_b64,
                     },
                 })
                 await self.ws.send_text(message)
 
                 # Pace at ~real-time: yield every 10 chunks (200ms)
-                # to let the read loop drain incoming messages
                 if chunk_num % 10 == 0:
                     await asyncio.sleep(0.02)
 
+            # Send a mark event to know when audio finishes playing
+            mark_name = f"audio_{self._send_seq}"
+            await self.ws.send_text(json.dumps({
+                "event": "mark",
+                "streamSid": self.stream_sid,
+                "mark": {"name": mark_name},
+            }))
+
             # Wait for audio to finish playing on customer's end
             duration_s = len(pcm_data) / (SAMPLE_RATE * BYTES_PER_SAMPLE * CHANNELS)
-            await asyncio.sleep(duration_s + 0.5)
+            await asyncio.sleep(duration_s + 0.2)
 
         except Exception as e:
             logger.error(f"Failed to send audio: {e}")
 
     @staticmethod
     def _fast_keyword_match(text: str, intent_map: dict) -> tuple[str | None, float]:
-        """Fast keyword matching for obvious intents — skips Gemini.
-
-        Returns (intent, confidence) or (None, 0) if no strong match.
-        """
+        """Fast keyword matching for obvious intents — skips Gemini."""
         text_lower = text.lower().strip()
-        # Common affirmative words that always mean "interested"
         AFFIRMATIVE = {"haan", "ha", "haa", "ji", "ji haan", "haan ji", "yes", "ok",
                        "okay", "theek hai", "bilkul", "zaroor", "sure", "han",
                        "हाँ", "हां", "जी", "जी हाँ", "हाँ जी", "ठीक है", "बिल्कुल"}
@@ -498,7 +519,6 @@ class VoicebotSession:
         if text_lower in NEGATIVE:
             return "not_interested", 0.95
 
-        # Check if text contains keywords from intent_map
         for intent_name, keywords in intent_map.items():
             for kw in keywords:
                 if kw.lower() in text_lower:
@@ -517,7 +537,6 @@ class VoicebotSession:
         logger.info(f"Ending voicebot session: call_sid={self.call_sid}")
 
         try:
-            # Update or create call log
             if self.call_log:
                 self.call_log.status = "completed"
                 self.call_log.ended_at = datetime.now(timezone.utc)
@@ -531,7 +550,6 @@ class VoicebotSession:
                 await self.db.commit()
                 logger.info(f"Call log updated: {self.call_log.id}")
 
-                # Trigger async summary generation
                 try:
                     from app.workers.summary_worker import generate_call_summary
                     generate_call_summary.delay(str(self.call_log.id))
@@ -541,7 +559,6 @@ class VoicebotSession:
         except Exception as e:
             logger.error(f"Failed to save call log: {e}")
 
-        # Clean up
         try:
             await self.sarvam.close()
         except Exception:
@@ -552,9 +569,9 @@ async def handle_voicebot_websocket(
     websocket: WebSocket,
     db: AsyncSession,
 ):
-    """Entry point for Exotel Voicebot WebSocket connections.
+    """Entry point for Twilio Media Streams WebSocket connections.
 
-    Exotel's Voicebot applet connects directly to this WebSocket.
+    Twilio's <Connect><Stream> connects directly to this WebSocket.
     We accept first, wait for the Start event to get call metadata,
     then look up the script and begin the AI conversation.
     """
@@ -564,12 +581,11 @@ async def handle_voicebot_websocket(
     call_sid = ""
     stream_sid = ""
 
-    # Wait for Connected and Start events from Exotel
+    # Wait for Connected and Start events from Twilio
     try:
-        for i in range(20):  # Max 20 messages before giving up
+        for i in range(20):
             message = await asyncio.wait_for(websocket.receive(), timeout=15.0)
 
-            # Log raw message type for debugging
             msg_type = message.get("type", "unknown")
             if "text" in message:
                 logger.info(f"WS handshake msg #{i}: type={msg_type}, text={message['text'][:200]}")
@@ -585,17 +601,16 @@ async def handle_voicebot_websocket(
                 continue
 
             event = data.get("event", "")
-            event_lower = event.lower()
 
-            if event_lower == "connected":
-                logger.info(f"Exotel stream connected: {data}")
-            elif event_lower == "start":
+            if event == "connected":
+                logger.info(f"Twilio stream connected: {data}")
+            elif event == "start":
                 start_data = data.get("start", {})
-                call_sid = start_data.get("callSid", start_data.get("call_sid", ""))
-                stream_sid = data.get("stream_sid", start_data.get("stream_sid", ""))
-                logger.info(f"Exotel stream started: call_sid={call_sid}, stream_sid={stream_sid}")
+                call_sid = start_data.get("callSid", "")
+                stream_sid = data.get("streamSid", "")
+                logger.info(f"Twilio stream started: call_sid={call_sid}, stream_sid={stream_sid}")
                 break
-            elif event_lower == "stop":
+            elif event == "stop":
                 logger.info("Call ended before starting")
                 return
     except asyncio.TimeoutError:

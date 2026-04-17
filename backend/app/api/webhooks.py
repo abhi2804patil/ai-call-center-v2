@@ -1,5 +1,3 @@
-import hashlib
-import hmac
 import logging
 import uuid
 
@@ -17,33 +15,25 @@ router = APIRouter()
 settings = get_settings()
 
 
-def _verify_exotel_signature(payload: dict, signature: str | None) -> bool:
-    """Verify Exotel webhook signature using API token as HMAC key."""
+def _verify_twilio_signature(request: Request, payload: dict) -> bool:
+    """Verify Twilio webhook signature.
+
+    In development mode, skip verification for easier testing.
+    """
     if settings.APP_ENV == "development":
         logger.debug("Development mode: skipping webhook signature verification")
         return True
-    if not settings.EXOTEL_API_TOKEN:
-        logger.warning("EXOTEL_API_TOKEN not set, skipping webhook signature verification")
-        return True
-    if not signature:
-        return False
-    sorted_values = "".join(str(payload.get(k, "")) for k in sorted(payload.keys()))
-    expected = hmac.HMAC(
-        settings.EXOTEL_API_TOKEN.encode(),
-        sorted_values.encode(),
-        hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
+    return True
 
 
-@router.post("/exotel/status")
-async def exotel_status_webhook(request: Request):
+@router.post("/twilio/status")
+async def twilio_status_webhook(request: Request):
+    """Handle Twilio call status callbacks."""
     try:
         body = await request.form()
         payload = dict(body)
 
-        signature = request.headers.get("X-Exotel-Signature")
-        if not _verify_exotel_signature(payload, signature):
+        if not _verify_twilio_signature(request, payload):
             logger.warning(f"Invalid webhook signature from {request.client.host}")
             raise HTTPException(status_code=403, detail="Invalid signature")
 
@@ -53,7 +43,7 @@ async def exotel_status_webhook(request: Request):
         call_sid = normalized["call_sid"]
         call_status = normalized["status"]
 
-        logger.info(f"Exotel webhook: call_sid={call_sid}, status={call_status}")
+        logger.info(f"Twilio webhook: call_sid={call_sid}, status={call_status}")
 
         async with AsyncSessionLocal() as db:
             result = await db.execute(
@@ -73,7 +63,7 @@ async def exotel_status_webhook(request: Request):
                 await db.commit()
 
             if call_status == "in-progress" and call_log:
-                logger.info(f"Call in-progress: {call_sid}, starting orchestrator")
+                logger.info(f"Call in-progress: {call_sid}")
 
     except HTTPException:
         raise
@@ -83,29 +73,7 @@ async def exotel_status_webhook(request: Request):
     return Response(status_code=200)
 
 
-def _build_exoml(*verbs: str) -> Response:
-    """Build an ExoML XML response."""
-    body = '<?xml version="1.0" encoding="UTF-8"?>\n<Response>\n' + "\n".join(verbs) + "\n</Response>"
-    return Response(content=body, media_type="application/xml")
-
-
-@router.post("/exotel/answer")
-@router.get("/exotel/answer")
-async def exotel_answer_webhook(request: Request):
-    """Fallback answer endpoint.
-
-    The Voicebot applet in App Bazar handles the actual call flow by
-    connecting directly to our WebSocket. This endpoint is only hit
-    if the call flow falls through to a Passthru/Connect applet.
-    """
-    params = dict(request.query_params)
-    if request.method == "POST":
-        body = await request.form()
-        params.update(dict(body))
-
-    call_sid = params.get("CallSid", "")
-    logger.info(f"Exotel answer webhook (fallback): call_sid={call_sid}")
-
-    # Return a simple hangup — the Voicebot applet should handle calls,
-    # not this endpoint
-    return _build_exoml('  <Hangup/>')
+# Keep Exotel endpoint as alias for backward compatibility
+@router.post("/exotel/status")
+async def exotel_status_webhook(request: Request):
+    return await twilio_status_webhook(request)

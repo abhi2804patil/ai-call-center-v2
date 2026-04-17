@@ -51,8 +51,8 @@ async def _process_campaign(campaign_id_str: str):
 
             telephony = TelephonyClient()
             base_url = settings.SERVER_BASE_URL or "http://backend:8000"
-            callback_url = f"{base_url}/api/v1/webhooks/exotel/status"
-            from_number = campaign.settings.get("caller_number") or settings.EXOTEL_CALLER_NUMBER
+            callback_url = f"{base_url}/api/v1/webhooks/twilio/status"
+            from_number = campaign.settings.get("caller_number") or settings.TWILIO_PHONE_NUMBER
             if not from_number:
                 logger.error(f"No caller number configured for campaign {campaign_id_str}")
                 return
@@ -136,10 +136,10 @@ async def _initiate_single(campaign_id_str: str, phone_number_id_str: str):
 
             telephony = TelephonyClient()
             base_url = settings.SERVER_BASE_URL or "http://backend:8000"
-            callback_url = f"{base_url}/api/v1/webhooks/exotel/status"
-            from_number = settings.EXOTEL_CALLER_NUMBER
+            callback_url = f"{base_url}/api/v1/webhooks/twilio/status"
+            from_number = settings.TWILIO_PHONE_NUMBER
             if not from_number:
-                logger.error("No caller number configured (EXOTEL_CALLER_NUMBER)")
+                logger.error("No caller number configured (TWILIO_PHONE_NUMBER)")
                 return
 
             call_result = await telephony.make_call(
