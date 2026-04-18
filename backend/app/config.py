@@ -20,8 +20,8 @@ class Settings(BaseSettings):
 
     # Sarvam AI
     SARVAM_API_KEY: str = ""
-    DEFAULT_SARVAM_VOICE: str = "priya"
-    DEFAULT_SARVAM_TTS_MODEL: str = "bulbul:v3-beta"
+    DEFAULT_SARVAM_VOICE: str = "anushka"
+    DEFAULT_SARVAM_TTS_MODEL: str = "bulbul:v2"
 
     # Google Gemini
     GEMINI_API_KEY: str = ""

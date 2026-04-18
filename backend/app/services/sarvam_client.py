@@ -73,20 +73,27 @@ class SarvamClient:
         self,
         text: str,
         language_code: str,
-        voice: str = "priya",
-        model: str = "bulbul:v3-beta",
+        voice: str = "anushka",
+        model: str = "bulbul:v2",
         sample_rate: int = 8000,
     ) -> tuple[bytes, int]:
+        import audioop
+
         start_time = time.time()
         language_code = _normalize_lang(language_code)
+
+        # Generate at 24kHz for better quality, then downsample to target rate
+        gen_rate = 24000
         url = f"{self.BASE_URL}/text-to-speech"
         payload = {
             "inputs": [text],
             "target_language_code": language_code,
             "speaker": voice,
             "model": model,
-            "speech_sample_rate": sample_rate,
-            "enable_preprocessing": False,
+            "speech_sample_rate": gen_rate,
+            "enable_preprocessing": True,
+            "pace": 1.0,
+            "loudness": 1.0,
         }
 
         response = await self._request_with_retry("POST", url, json=payload)
@@ -95,13 +102,21 @@ class SarvamClient:
         data = response.json()
         audio_base64 = data["audios"][0]
         audio_bytes = base64.b64decode(audio_base64)
-        duration_ms = self._calculate_wav_duration(audio_bytes, sample_rate)
+
+        # Strip WAV header
+        pcm_data = audio_bytes[44:] if audio_bytes[:4] == b"RIFF" else audio_bytes
+
+        # Downsample from 24kHz to target sample rate
+        if gen_rate != sample_rate:
+            pcm_data, _ = audioop.ratecv(pcm_data, 2, 1, gen_rate, sample_rate, None)
+
+        duration_ms = int(len(pcm_data) / (sample_rate * 2) * 1000)
 
         logger.info(
             f"TTS completed: lang={language_code}, voice={voice}, "
             f"text_len={len(text)}, duration={duration_ms}ms, latency={elapsed:.2f}s"
         )
-        return audio_bytes, duration_ms
+        return pcm_data, duration_ms
 
     async def speech_to_text(
         self,

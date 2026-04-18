@@ -42,7 +42,7 @@ BYTES_PER_SAMPLE = 2  # 16-bit PCM (after mulaw decode)
 CHANNELS = 1
 # Silence detection
 SILENCE_THRESHOLD = 500  # amplitude threshold for silence detection
-SILENCE_DURATION_MS = 800  # ms of silence before processing (short utterances)
+SILENCE_DURATION_MS = 600  # ms of silence before processing (short utterances)
 SILENCE_DURATION_LONG_MS = 1200  # ms for longer utterances (>2s of speech)
 # Minimum audio to process (avoid processing noise/clicks)
 MIN_AUDIO_DURATION_MS = 500
@@ -431,7 +431,7 @@ class VoicebotSession:
 
             if not audio_bytes:
                 # Live TTS generation
-                voice_id = self.script_content.get("voice_id", "priya")
+                voice_id = self.script_content.get("voice_id", "anushka")
                 audio_bytes, duration_ms = await self.sarvam.text_to_speech(
                     text, self.detected_language, voice=voice_id, sample_rate=SAMPLE_RATE
                 )
@@ -499,7 +499,7 @@ class VoicebotSession:
 
             # Wait for audio to finish playing on customer's end
             duration_s = len(pcm_data) / (SAMPLE_RATE * BYTES_PER_SAMPLE * CHANNELS)
-            await asyncio.sleep(duration_s + 0.2)
+            await asyncio.sleep(max(duration_s - 0.5, 0))
 
         except Exception as e:
             logger.error(f"Failed to send audio: {e}")
@@ -508,17 +508,52 @@ class VoicebotSession:
     def _fast_keyword_match(text: str, intent_map: dict) -> tuple[str | None, float]:
         """Fast keyword matching for obvious intents — skips Gemini."""
         text_lower = text.lower().strip()
-        AFFIRMATIVE = {"haan", "ha", "haa", "ji", "ji haan", "haan ji", "yes", "ok",
-                       "okay", "theek hai", "bilkul", "zaroor", "sure", "han",
-                       "हाँ", "हां", "जी", "जी हाँ", "हाँ जी", "ठीक है", "बिल्कुल"}
-        NEGATIVE = {"nahi", "nhi", "no", "nope", "mat", "naa", "na",
-                    "नहीं", "नही", "ना", "मत"}
 
-        if text_lower in AFFIRMATIVE:
+        # Exact single-word matches (highest confidence)
+        AFFIRMATIVE_EXACT = {"haan", "ha", "haa", "ji", "yes", "ok", "okay", "sure",
+                             "bilkul", "zaroor", "han", "theek",
+                             "हाँ", "हां", "जी", "बिल्कुल", "ज़रूर"}
+        NEGATIVE_EXACT = {"nahi", "nhi", "no", "nope", "mat", "naa", "na",
+                          "नहीं", "नही", "ना", "मत"}
+
+        # Check if any word in the phrase is affirmative/negative
+        words = set(text_lower.split())
+
+        # Exact match on full text
+        if text_lower in AFFIRMATIVE_EXACT:
             return "interested", 0.95
-        if text_lower in NEGATIVE:
+        if text_lower in NEGATIVE_EXACT:
             return "not_interested", 0.95
 
+        # Phrase contains affirmative words (e.g. "haan bataiye", "ji haan boliye",
+        # "ha theek hai", "okay sure", "haan ji bolo")
+        AFFIRMATIVE_WORDS = AFFIRMATIVE_EXACT | {"haan ji", "ji haan", "theek hai",
+                                                  "जी हाँ", "हाँ जी", "ठीक है"}
+        NEGATIVE_WORDS = NEGATIVE_EXACT | {"nahi nahi", "no no", "नहीं नहीं"}
+
+        if words & AFFIRMATIVE_EXACT:
+            return "interested", 0.90
+        # Also check bigrams for compound phrases
+        for phrase in AFFIRMATIVE_WORDS:
+            if phrase in text_lower:
+                return "interested", 0.90
+
+        if words & NEGATIVE_EXACT:
+            return "not_interested", 0.90
+        for phrase in NEGATIVE_WORDS:
+            if phrase in text_lower:
+                return "not_interested", 0.90
+
+        # Callback-related keywords
+        CALLBACK_WORDS = {"baad", "kal", "later", "callback", "busy", "abhi nahi",
+                          "baad mein", "kal call", "बाद", "कल", "बाद में"}
+        if words & {"baad", "kal", "later", "callback", "busy", "बाद", "कल"}:
+            return "callback", 0.85
+        for phrase in CALLBACK_WORDS:
+            if phrase in text_lower:
+                return "callback", 0.85
+
+        # Check intent_map keywords
         for intent_name, keywords in intent_map.items():
             for kw in keywords:
                 if kw.lower() in text_lower:
